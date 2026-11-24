@@ -89,6 +89,9 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--pink);ba
 .vinfo p{margin:6px 0}
 .vlinks{font-size:13px}
 .vlinks a{color:var(--navy)}
+.whobar{margin-top:10px;border-radius:12px;padding:8px 12px;font-size:14px}
+.whobar.on{background:var(--green-l);color:#23733b}
+.whobar.off{background:#fff6d6;color:#8a5a00}
 
 .watch{display:flex;align-items:center;gap:10px;margin:4px 0 12px;font-size:14px;color:var(--muted)}
 .watch .bar{flex:1;height:10px;background:#eee;border-radius:5px;overflow:hidden}
@@ -224,15 +227,53 @@ const embedURL=p=>`https://www.youtube-nocookie.com/embed/${p.vid}?start=0&end=$
 const watchURL=p=>`https://www.youtube.com/watch?v=${p.vid}`;
 const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 function toast(t){const el=document.getElementById('toast');el.textContent=t;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),2000);}
+/* ===== 학생별 저장 =====
+   반·번호를 입력하면 그 학생의 기록만 따로 저장해요.
+   지금 쓰는 학생 정보는 이 탭에만 기억(탭을 닫으면 초기화)되어,
+   같은 태블릿을 다음 반 학생이 써도 앞 학생의 기록이 보이지 않아요. */
+const WHO_KEY='jp6_who';
+const normWho=(c,n)=>{c=String(c||'').replace(/\s/g,'').replace(/반$/,'');n=String(n||'').replace(/\D/g,'').replace(/^0+/,'');return c&&n?`${c}-${n}`:'';};
+function getWho(){try{return sessionStorage.getItem(WHO_KEY)||'';}catch(e){return '';}}
+function setWho(w){try{w?sessionStorage.setItem(WHO_KEY,w):sessionStorage.removeItem(WHO_KEY);}catch(e){}}
 function makeStore(key,init){
-  let state=init;
-  try{const s=JSON.parse(localStorage.getItem(key)||'null');if(s)state=Object.assign(init,s);}catch(e){}
+  const who=getWho();const k=who?`${key}__${who}`:null;
+  let state=JSON.parse(JSON.stringify(init));
+  if(k){try{const s=JSON.parse(localStorage.getItem(k)||'null')||legacyFor(key,who);if(s)state=Object.assign(state,s);}catch(e){}}
   let t;
-  return {get s(){return state},save(){clearTimeout(t);t=setTimeout(()=>{try{localStorage.setItem(key,JSON.stringify(state));const el=document.getElementById('saved');if(el)el.textContent='✔ 자동 저장됨 · '+new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});}catch(e){}},300);},
-          clear(){try{localStorage.removeItem(key);}catch(e){}}};
+  return {key,who,get s(){return state},
+    save(){const el=document.getElementById('saved');
+      if(!k){if(el)el.textContent='💡 반과 번호를 먼저 입력해야 내 기록이 저장돼요.';return;}
+      clearTimeout(t);t=setTimeout(()=>{try{localStorage.setItem(k,JSON.stringify(state));if(el)el.textContent='✔ 자동 저장됨 · '+new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});}catch(e){}},300);},
+    clear(){if(k){try{localStorage.removeItem(k);}catch(e){}}setWho('');}};
 }
-function readOther(key){try{return JSON.parse(localStorage.getItem(key)||'null');}catch(e){return null;}}
-function bindBasics(store){document.querySelectorAll('[data-save]').forEach(el=>{el.value=store.s.info[el.id]||'';el.addEventListener('input',()=>{store.s.info[el.id]=el.value;store.save();});});}
+/* 예전 방식(학생 구분 없이 저장)으로 남은 기록 중 반·번호가 같은 것만 이어받기 */
+function legacyFor(key,w){try{const o=JSON.parse(localStorage.getItem(key)||'null');if(o&&o.info&&normWho(o.info.cls,o.info.no)===w)return o;}catch(e){}return null;}
+function readOther(key){const w=getWho();if(!w)return null;try{const o=JSON.parse(localStorage.getItem(`${key}__${w}`)||'null');
+  if(o&&Object.keys(o).some(k=>k!=='info'))return o;return legacyFor(key,w)||o;}catch(e){return null;}}
+function switchStudent(store,w){
+  const k=`${store.key}__${w}`;let exists=false;try{exists=!!localStorage.getItem(k);}catch(e){}
+  if(!exists){const old=legacyFor(store.key,w);if(old){try{localStorage.setItem(k,JSON.stringify(old));}catch(e){}setWho(w);location.reload();return;}
+    const i=store.s.info||{};
+    const data=store.who?{info:{cls:i.cls||'',no:i.no||'',name:i.name||''}}:store.s;   /* 처음 입력한 학생이면 지금까지 쓴 내용을 그대로 이어서 저장 */
+    try{localStorage.setItem(k,JSON.stringify(data));}catch(e){}}
+  setWho(w);location.reload();
+}
+function bindBasics(store){
+  if(store.who&&!(store.s.info.cls&&store.s.info.no)){ /* 이 차시 기록이 처음이면 반·번호·이름을 채워 줘요 */
+    const w=store.who,j=w.lastIndexOf('-');store.s.info.cls=w.slice(0,j);store.s.info.no=w.slice(j+1);
+    if(!store.s.info.name){for(const k of ['jp6_l1','jp6_l2','jp6_l3','jp6_l4']){const o=readOther(k);if(o&&o.info&&o.info.name){store.s.info.name=o.info.name;break;}}}
+    store.save();}
+  document.querySelectorAll('[data-save]').forEach(el=>{el.value=store.s.info[el.id]||'';el.addEventListener('input',()=>{store.s.info[el.id]=el.value;store.save();});});
+  ['cls','no'].forEach(id=>{const el=document.getElementById(id);if(!el)return;
+    el.addEventListener('change',()=>{const w=normWho(store.s.info.cls,store.s.info.no);if(w&&w!==store.who)switchStudent(store,w);});});
+  const anchor=document.getElementById('no')&&document.getElementById('no').closest('.grid3');
+  if(anchor){const bar=document.createElement('div');bar.className='whobar '+(store.who?'on':'off');
+    const [c,n]=(store.who||'').split('-').length>2?[store.who.slice(0,store.who.lastIndexOf('-')),store.who.slice(store.who.lastIndexOf('-')+1)]:(store.who||'').split('-');
+    bar.innerHTML=store.who?`✅ <b>${esc(c)}반 ${esc(n)}번</b>의 기록으로 저장하고 있어요. 내 반·번호가 아니면 고쳐 쓰세요.`
+      :'💡 <b>반과 번호를 먼저 입력</b>하세요. 입력하면 내 기록만 따로 저장되고, 지난 시간 기록도 불러올 수 있어요.';
+    anchor.insertAdjacentElement('afterend',bar);}
+  if(!store.who){const el=document.getElementById('saved');if(el)el.textContent='💡 반과 번호를 먼저 입력해야 내 기록이 저장돼요.';}
+}
 const info=(store,id)=>(store.s.info[id]||'').trim();
 async function saveImage(el,fname){
   if(typeof html2canvas==='undefined'){toast('이미지 기능을 불러오지 못했어요. 화면을 캡처해 주세요');return;}
